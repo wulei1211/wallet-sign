@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/wulei1211/wallet-sign/leveldb"
-	"github.com/wulei1211/wallet-sign/protobuf"
 	"github.com/wulei1211/wallet-sign/ssm"
 
 	"github.com/wulei1211/wallet-sign/protobuf/wallet"
@@ -41,9 +40,9 @@ func (s *RpcService) CreateKeyPairsExportPublicKeyList(ctx context.Context, in *
 		return resp, nil
 	}
 
-	cryptoType, err := protobuf.ParseTransactionType(in.SignType)
-	if err != nil {
-		resp.Message = "input sign type error"
+	encryption := ssm.EncryptionMap[in.SignType]
+	if encryption == nil {
+		resp.Message = "input type error"
 		return resp, nil
 	}
 
@@ -56,18 +55,9 @@ func (s *RpcService) CreateKeyPairsExportPublicKeyList(ctx context.Context, in *
 	var exportPublicKeyList []*wallet.ExportPublicKey
 
 	for counter := 0; counter < int(in.KeyNum); counter++ {
-		var priKeyStr, pubKeyStr, compressPubkeyStr string
-		var err error
 
-		switch cryptoType {
-		case protobuf.ECDSA:
-			priKeyStr, pubKeyStr, compressPubkeyStr, err = ssm.CreateECDSAKeyPair()
-		case protobuf.EDDSA:
-			priKeyStr, pubKeyStr, err = ssm.CreateEdDSAKeyPair()
-			compressPubkeyStr = pubKeyStr
-		default:
-			return nil, errors.New("unsupported key type")
-		}
+		priKeyStr, pubKeyStr, compressPubkeyStr, err := encryption.CreateKeyPair()
+
 		if err != nil {
 			log.Error("create key pair fail", "err", err)
 			return nil, err
@@ -100,8 +90,9 @@ func (s *RpcService) SignMessageSignature(ctx context.Context, in *wallet.SignMe
 	resp := &wallet.SignMessageSignatureResponse{
 		Code: wallet.ReturnCode_ERROR,
 	}
-	cryptoType, err := protobuf.ParseTransactionType(in.SignType)
-	if err != nil {
+
+	encryption := ssm.EncryptionMap[in.SignType]
+	if encryption == nil {
 		resp.Message = "input type error"
 		return resp, nil
 	}
@@ -111,19 +102,9 @@ func (s *RpcService) SignMessageSignature(ctx context.Context, in *wallet.SignMe
 		return nil, errors.New("get private key by public key fail")
 	}
 
-	var signature string
-	var err2 error
-
-	switch cryptoType {
-	case protobuf.ECDSA:
-		signature, err2 = ssm.SignECDSAMessage(privKey, in.TxMessageHash)
-	case protobuf.EDDSA:
-		signature, err2 = ssm.SignEdDSAMessage(privKey, in.TxMessageHash)
-	default:
-		return nil, errors.New("unsupported key type")
-	}
-	if err2 != nil {
-		return nil, err2
+	signature, err := encryption.SignMessage(privKey, in.TxMessageHash)
+	if err != nil {
+		return nil, err
 	}
 	resp.Message = "sign tx message success"
 	resp.Signature = signature
@@ -137,25 +118,20 @@ func (s *RpcService) SignBatchMessageSignature(ctx context.Context, in *wallet.S
 	}
 	var msgSignatureList []*wallet.MessageSignature
 	for _, msgHash := range in.MessageHashes {
-		cryptoType, err := protobuf.ParseTransactionType(msgHash.SignType)
-		if err != nil {
+
+		encryption := ssm.EncryptionMap[msgHash.SignType]
+		if encryption == nil {
 			log.Error("parse transaction error", "messageHash", msgHash.TxMessageHash)
 		}
+
 		privKey, isOk := s.db.GetPrivKey(msgHash.PublicKey)
 		if !isOk {
-			log.Error("get private key by public key fail", "err", err)
+			log.Error("get private key by public key fail")
 		}
-		var signature string
-		var err2 error
-		switch cryptoType {
-		case protobuf.ECDSA:
-			signature, err2 = ssm.SignECDSAMessage(privKey, msgHash.TxMessageHash)
-		case protobuf.EDDSA:
-			signature, err2 = ssm.SignEdDSAMessage(privKey, msgHash.TxMessageHash)
-		default:
-			return nil, errors.New("unsupported key type")
-		}
-		if err2 != nil {
+
+		signature, err := encryption.SignMessage(privKey, msgHash.TxMessageHash)
+
+		if err != nil {
 			log.Error("sign message hash fail", "err", err)
 			continue
 		}
