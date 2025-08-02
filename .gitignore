@@ -32,3 +32,12 @@ signature
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# LevelDB data files
+data/*.ldb
+data/*.log
+data/CURRENT
+data/CURRENT.bak
+data/LOCK
+data/LOG
+data/MANIFEST-*
